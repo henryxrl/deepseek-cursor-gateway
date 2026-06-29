@@ -1,0 +1,14 @@
+services:
+  deepseek-cursor-gateway:
+    image: ghcr.io/henryxrl/deepseek-cursor-gateway:latest
+    container_name: deepseek-cursor-gateway
+    ports:
+      - "${GATEWAY_PORT:-9000}:${GATEWAY_PORT:-9000}"
+    env_file:
+      - .env
+    volumes:
+      - gateway-data:/data
+    restart: unless-stopped
+
+volumes:
+  gateway-data:

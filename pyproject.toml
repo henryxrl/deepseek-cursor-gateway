@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepseek-cursor-gateway"
+dynamic = ["version"]
+description = "Docker-first gateway for Cursor + DeepSeek with traffic control and image/OCR handling"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Henry Xu" },
+]
+keywords = ["cursor", "deepseek", "proxy", "gateway", "llm", "openai-compatible", "reasoning", "ocr", "rate-limiting"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: Proxy Servers",
+    "Topic :: Software Development",
+]
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/henryxrl/deepseek-cursor-gateway"
+Repository = "https://github.com/henryxrl/deepseek-cursor-gateway"
+Documentation = "https://github.com/henryxrl/deepseek-cursor-gateway/tree/main/docs"
+"Upstream (original)" = "https://github.com/yxlao/deepseek-cursor-proxy"
+"Upstream (turbo fork)" = "https://github.com/abcduyt1243-git/deepseek-cursor-proxy-turbo"
+
+[project.optional-dependencies]
+dev = [
+    "black==24.2.0",
+    "pre-commit>=3.0.0",
+    "ruff>=0.3.0",
+]
+
+[project.scripts]
+deepseek-cursor-gateway = "deepseek_cursor_gateway.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["deepseek_cursor_gateway*"]
+
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}
+
+[tool.black]
+target-version = ["py310"]

@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[codz]
+*.so
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Git
+.git/
+.github/
+
+# Tests
+tests/
+
+# Assets
+assets/
+
+# Docs & reports (not needed in the image)
+*.md
+LICENSE
+
+# Dev tooling
+.pre-commit-config.yaml
+uv.lock
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.specstory/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+trace-dumps/
+*.sqlite3*
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+
+# Cursor agent artifacts
+agent-transcripts/
+agent-tools/
+terminals/
+uploads/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker-specific (not needed inside the image)
+.dockerignore
+Dockerfile
+docker-compose.yml
+docker-compose.dev.yml
