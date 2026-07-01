@@ -12,6 +12,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 
 from .logging import LOG
+from .metrics import GatewayMetrics
 
 
 RETRYABLE_STATUSES: frozenset[int] = frozenset({429, 502, 503, 504})
@@ -133,11 +134,16 @@ class TrafficController:
     def _acquire_slot(self) -> None:
         if self._semaphore is None:
             return
+        wait_started = time.perf_counter()
         acquired = self._semaphore.acquire(timeout=self._queue_timeout)
         if not acquired:
             raise UpstreamQueueTimeout(self._queue_timeout)
+        waited = time.perf_counter() - wait_started
+        if waited > 0:
+            GatewayMetrics.global_instance().observe_queue_wait(waited)
         with self._lock:
             self._active += 1
+        GatewayMetrics.global_instance().set_upstream_active(self._active)
 
     def _release_slot(self) -> None:
         if self._semaphore is None:
@@ -145,6 +151,7 @@ class TrafficController:
         self._semaphore.release()
         with self._lock:
             self._active -= 1
+        GatewayMetrics.global_instance().set_upstream_active(self._active)
 
     def _wait_cooldown(self) -> None:
         while True:
@@ -248,9 +255,12 @@ class TrafficController:
                 # Update global cooldown on 429
                 if self._retry.cooldown_on_429 and _is_429(exc):
                     self._set_cooldown(delay)
+                    GatewayMetrics.global_instance().record_cooldown()
 
                 if attempt >= total_attempts - 1:
                     raise
+
+                GatewayMetrics.global_instance().record_retry()
 
                 # Log retry event
                 LOG.warning(

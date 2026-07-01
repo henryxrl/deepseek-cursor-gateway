@@ -26,13 +26,13 @@ GATEWAY_IMAGE_HANDLING=ocr
 
 Images are replaced with a placeholder:
 
-```
+```text
 [Image omitted: DeepSeek text models do not support image input.]
 ```
 
 The gateway logs how many images were detected:
 
-```
+```text
 image detected image_handling=strip image_count=3 request_path=/v1/chat/completions
 ```
 
@@ -60,7 +60,7 @@ Each image is converted to text before forwarding to DeepSeek.
 
 ### Pipeline
 
-```
+```text
 ╔══════════════════╗
 ║ Cursor sends     ║
 ║ image_url blocks ║

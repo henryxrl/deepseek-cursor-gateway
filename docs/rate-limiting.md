@@ -14,7 +14,7 @@ GATEWAY_UPSTREAM_MAX_INFLIGHT=2
 
 Set to `0` to disable the gate entirely (unlimited concurrency).
 
-```
+```text
 GATEWAY_UPSTREAM_MAX_INFLIGHT=0
 ```
 
@@ -57,7 +57,7 @@ GATEWAY_UPSTREAM_RETRY_JITTER_SECONDS=1  # random jitter
 
 ### Backoff Algorithm
 
-```
+```text
 delay = base_delay × 2^attempt + random(0, jitter)
 delay = min(delay, max_delay)
 ```
@@ -82,10 +82,10 @@ GATEWAY_UPSTREAM_COOLDOWN_ON_429=1
 ```
 
 The cooldown duration equals the backoff delay computed for the 429 response.
-While the cooldown is active, log lines show:
+While the cooldown is active, new upstream attempts wait before acquiring a slot. Retry events appear in logs as:
 
-```
-traffic cooldown_wait_ms=... reason=429
+```text
+retry attempt=1/3 delay_ms=...
 ```
 
 ### Important: Retries happen before Cursor receives headers
@@ -116,28 +116,51 @@ Use this only after observing burst-related issues. For most Cursor use, the def
 
 ---
 
-## Logs to Watch
+## Logs and Metrics to Watch
 
-Enable verbose mode to see traffic-control logs:
+### Prometheus (`/metrics`)
+
+The primary way to observe traffic control without verbose logging:
+
+```bash
+curl -s http://localhost:9000/metrics | grep -E 'queue|upstream_active|retry|cooldown'
+```
+
+| Metric | What it tells you |
+| ------ | ----------------- |
+| `gateway_queue_wait_duration_seconds` | Time requests spent waiting for an upstream slot |
+| `gateway_upstream_active_requests` | How many upstream calls are in flight right now |
+| `gateway_upstream_request_duration_seconds` | End-to-end upstream request duration |
+| `gateway_retry_attempts_total` | Retry count |
+| `gateway_cooldown_total` | Global 429 cooldown events |
+
+Queue wait **sum/count rising** means gateway-side queueing; **retry/cooldown** counters rising means DeepSeek rate limiting.
+
+### Request manifest logs
+
+Every completed chat request emits one structured line (no `GATEWAY_VERBOSE` needed):
+
+```text
+request_manifest status=completed model=deepseek-v4-pro stream=false image_count=0 recovery=false missing_reasoning=0 upstream_status=200 elapsed_ms=...
+```
+
+Use `status=queue_timeout` or `upstream_error` to spot local queue saturation vs upstream failures.
+
+### Verbose mode (optional)
+
+For full request/response bodies, enable:
 
 ```bash
 GATEWAY_VERBOSE=1
 ```
 
-Relevant log lines:
+Retry attempts also log as:
 
-```
-traffic slot_wait_ms=... active=1 max=2
-retry attempt=1/3 delay_ms=... retry_after=...
-traffic cooldown_wait_ms=... reason=429
-upstream elapsed_ms=... stream=...
+```text
+retry attempt=1/3 delay_ms=...
 ```
 
-This tells you whether the bottleneck is:
-
-- Gateway-side queueing (`slot_wait_ms > 0`)
-- DeepSeek rate limiting (`429` + `cooldown`)
-- DeepSeek throughput or long context (`elapsed_ms`)
+See [DeepSeek Cursor Gateway](README.md) for the full metric list.
 
 ---
 
@@ -145,7 +168,7 @@ This tells you whether the bottleneck is:
 
 | Scenario                                      | Adjustment                                               |
 | --------------------------------------------- | -------------------------------------------------------- |
-| Cursor feels sluggish, lots of `slot_wait_ms` | Increase `upstream_max_inflight` to 3 or 4               |
+| Cursor feels sluggish, queue wait metrics rising | Increase `upstream_max_inflight` to 3 or 4               |
 | Getting 429s from DeepSeek                    | Keep `cooldown_on_429=1`; reduce `upstream_max_inflight` |
 | Retries too slow                              | Lower `base_delay_seconds` or `max_delay_seconds`        |
 | Testing / debugging                           | Set `upstream_max_inflight=0`, `retry_enabled=0`         |

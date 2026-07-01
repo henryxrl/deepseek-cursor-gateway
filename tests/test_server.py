@@ -186,9 +186,10 @@ class CliAndHelperTests(unittest.TestCase):
             "deepseek_cursor_gateway.server.warm_up_vision_backend",
             return_value="ok",
         ) as warm_up:
-            result = maybe_warm_up_vision(config)
+            result, state = maybe_warm_up_vision(config)
 
         self.assertIs(result, config)
+        self.assertEqual(state, "ok")
         warm_up.assert_called_once()
         self.assertEqual(warm_up.call_args.args[0].backend, "openai_compatible")
         self.assertEqual(warm_up.call_args.args[0].fallback_backend, "")
@@ -212,11 +213,12 @@ class CliAndHelperTests(unittest.TestCase):
             "deepseek_cursor_gateway.server.warm_up_vision_backend",
             side_effect=fake_warm_up,
         ):
-            result = maybe_warm_up_vision(config)
+            result, state = maybe_warm_up_vision(config)
 
         self.assertEqual(calls, ["openai_compatible", "tesseract"])
         self.assertEqual(result.vision_backend, "tesseract")
         self.assertEqual(result.vision_fallback_backend, "")
+        self.assertEqual(state, "ok_fallback")
 
     def test_maybe_warm_up_vision_require_raises_without_fallback(self) -> None:
         config = GatewayConfig(

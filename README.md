@@ -15,8 +15,10 @@ A local gateway that makes [Cursor](https://cursor.com) work with [DeepSeek V4](
 **What it does:**
 
 - **Reasoning-content cache** — preserves DeepSeek's `reasoning_content` across Cursor turns so tool-call reasoning chains never break.
+- **Thinking control** — per-request override via body `thinking` field or `-nothink` model suffix, with configurable `reasoning_effort`.
 - **Upstream traffic control** — concurrency gate, queue timeout, automatic retry with exponential backoff, `Retry-After` support, and global 429 cooldown.
 - **Image input handling** — strip, reject, or OCR images before forwarding to DeepSeek. Supports OpenAI-compatible vision models, Google Gemini, and local Tesseract OCR.
+- **Observability** — `/healthz` (liveness + optional upstream reachability probe), `/readyz` (readiness), `/info` (safe config), `/metrics` (Prometheus: requests, latency/queue, active upstream, cache, recovery), and per-request `request_manifest` logs.
 
 ---
 
@@ -36,11 +38,11 @@ Your DeepSeek API key stays in Cursor — the gateway forwards it transparently.
 
 ## Documentation
 
-- [Feature overview →](docs/README.md)
-- [Configuration reference →](docs/configuration.md)
-- [Upstream traffic control →](docs/rate-limiting.md)
-- [Image handling and OCR →](docs/image-handling.md)
-- [Deployment guide →](docs/deployment.md)
+- [DeepSeek Cursor Gateway](docs/README.md)
+- [Configuration Reference](docs/configuration.md)
+- [Upstream Traffic Control](docs/rate-limiting.md)
+- [Image Input Handling](docs/image-handling.md)
+- [Deployment](docs/deployment.md)
 
 ---
 
@@ -50,8 +52,10 @@ Your DeepSeek API key stays in Cursor — the gateway forwards it transparently.
 git clone https://github.com/henryxrl/deepseek-cursor-gateway.git
 cd deepseek-cursor-gateway
 pip install -e .
-deepseek-cursor-gateway --host 0.0.0.0 --port 9000
+deepseek-cursor-gateway --host 0.0.0.0 --port 9000 --no-ngrok
 ```
+
+Native config defaults to `ngrok: true`; pass `--no-ngrok` unless you have ngrok installed and want a public tunnel.
 
 ---
 

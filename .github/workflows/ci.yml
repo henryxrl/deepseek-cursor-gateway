@@ -75,3 +75,12 @@ jobs:
 
       - name: Run unit tests
         run: uv run python -m unittest discover -s tests -v
+
+  docker-smoke:
+    name: Docker smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run Docker smoke script
+        run: bash tests/test_docker_smoke.sh

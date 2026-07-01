@@ -56,7 +56,7 @@ Append `-nothink` (case-insensitive) to the model name to disable deep thinking 
 | `deepseek-v4-pro-NOTHINK`     | `deepseek-v4-pro`   | disabled |
 | `deepseek-v4-pro-nothink-nothink` | `deepseek-v4-pro` | disabled |
 
-This is designed for Cursor, where the model picker lets you select between `deepseek-v4-pro` (thinking on) and `deepseek-v4-pro-nothink` (thinking off) per conversation without changing your endpoint URL or provider config.
+This is designed for Cursor, where the model picker lets you select between `deepseek-v4-pro` (thinking on) and `deepseek-v4-pro-nothink` (thinking off) per conversation without changing your endpoint URL or provider config. The gateway also lists `-nothink` variants in `/v1/models` for clients that load models from the API.
 
 The suffix only takes effect when it appears at the **end** of the model name.
 `deepseek-nothink-v4-pro` is treated as a regular model name with no override.
@@ -71,6 +71,8 @@ The suffix only takes effect when it appears at the **end** of the model name.
 | `{"type": "enabled"}`    | `deepseek-v4-pro-nothink`  | `disabled`        | enabled   |
 | `{"type": "invalid"}`    | `deepseek-v4-pro`          | `enabled`         | enabled   |
 | `{"type": "invalid"}`    | `deepseek-v4-pro-nothink`  | `enabled`         | disabled  |
+
+For the OpenAI-compatible model IDs the gateway advertises (including `-nothink` variants), see [Observability Endpoints](#observability-endpoints).
 
 ---
 
@@ -160,6 +162,20 @@ These advanced settings are configured in `config.yaml` only — there are no co
 | `GATEWAY_CORS`      | `cors`      | `false`             | Send permissive CORS headers                          |
 | `GATEWAY_TRACE_DIR` | `trace_dir` | —                   | Write structured request traces to disk               |
 | `GATEWAY_CONFIG`    | —           | `/data/config.yaml` | YAML config file path                                 |
+
+---
+
+## Observability Endpoints
+
+Read-only GET endpoints for health checks, configuration inspection, and metrics. None require authentication (bind to localhost or protect at the reverse proxy in production).
+
+| Endpoint | Description |
+| -------- | ----------- |
+| `/healthz`, `/v1/healthz` | Liveness: `ok`, `version`, `uptime_seconds`. Add `?upstream=1` for upstream **reachability** (`upstream_reachable`, `probe_url`, `probe_status`, `probe_error_type`). A `true` reachability result does not mean the API key or model permissions are valid. |
+| `/readyz`, `/v1/readyz` | Readiness: `ready` and per-component checks (`reasoning_cache`, `traffic_controller`, `ocr_cache`, `vision_warmup`). Returns HTTP 503 when not ready. |
+| `/info`, `/v1/info` | Grouped runtime config (`upstream`, `image_handling`, `display`, `reasoning_cache`, `traffic_control`, `network`). Secrets and file paths excluded. |
+| `/metrics` | Prometheus text format — request counts, upstream latency/queue metrics, active upstream gauge, retries, cooldowns, reasoning/OCR cache stats, recovery counters. |
+| `/models`, `/v1/models` | OpenAI-compatible model list. Each base model is listed with a `-nothink` variant for thinking toggle. See [Per-Request Thinking Override](#per-request-thinking-override) for how the suffix is applied. |
 
 ---
 

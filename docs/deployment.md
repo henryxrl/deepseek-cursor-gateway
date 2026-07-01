@@ -37,7 +37,7 @@ docker compose -f docker-compose.dev.yml up -d --build
 
 See the full reference:
 
-- [Configuration reference →](configuration.md)
+- [Configuration Reference](configuration.md)
 
 A minimal `.env`:
 
@@ -85,31 +85,112 @@ docker run -d \
 ## Verifying the Gateway
 
 ```bash
-# Health check
+# Health check (version + uptime)
 curl http://localhost:9000/healthz
-# → {"ok": true}
+# → {"ok": true, "version": "<version>", "uptime_seconds": 123.45}
 
-# List models
+# Health check with upstream reachability probe (GET to upstream /models, 5s timeout)
+curl "http://localhost:9000/healthz?upstream=1"
+# → {"ok": true, "version": "<version>", "uptime_seconds": 123.45,
+#     "upstream_reachable": true, "probe_url": "...", "probe_status": 401, "probe_error_type": "http_error"}
+# Note: upstream_reachable means HTTP connectivity, not valid API credentials.
+
+# Readiness (cache DB, traffic controller, OCR / vision warm-up when applicable)
+curl http://localhost:9000/readyz
+# → {"ready": true, "version": "<version>", "checks": {...}}
+
+# Runtime configuration (grouped JSON, no secrets)
+curl http://localhost:9000/info
+# → {"version": "<version>", "upstream": {...}, "image_handling": {...}, ...}
+
+# Prometheus metrics (text format)
+curl http://localhost:9000/metrics
+
+# List models (includes -nothink variants for thinking toggle)
 curl http://localhost:9000/v1/models
-# → shows DeepSeek models
+# → deepseek-v4-pro, deepseek-v4-pro-nothink, deepseek-v4-flash, ...
 ```
 
-To check that the traffic controller is active, enable verbose logging in `.env`, recreate the container, and watch the logs:
+`/info` groups settings into `upstream`, `image_handling`, `display`, `reasoning_cache`, `traffic_control`, and `network`. API keys, file paths, and other sensitive values are never included.
+
+For Docker health checks, a lightweight probe is enough:
 
 ```bash
-# Add this to .env:
-# GATEWAY_VERBOSE=1
-
-docker compose up -d --force-recreate
-docker compose logs -f deepseek-cursor-gateway
+curl -f http://localhost:9000/healthz
 ```
 
-Watch for lines like:
+To also verify DeepSeek reachability (slower, needs outbound network):
 
+```bash
+curl -f "http://localhost:9000/healthz?upstream=1" | jq -e '.upstream_reachable == true'
 ```
-traffic slot_wait_ms=... active=... max=...
-retry attempt=... delay_ms=...
+
+### Docker Compose healthcheck
+
+The image includes Python but not `curl`. Add a `healthcheck` to your Compose service (or override file) to let Docker mark the container unhealthy when the process stops responding:
+
+```yaml
+services:
+  deepseek-cursor-gateway:
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 ```
+
+Use `/healthz` only — do not point Docker healthchecks at `?upstream=1`; the external probe is slower and can fail when DeepSeek is briefly unreachable even though the gateway is fine. Use `/readyz` in deployment systems that need dependency checks (cache writable, OCR warm-up known). Adjust `9000` if `GATEWAY_PORT` is not the default.
+
+### Docker image smoke tests
+
+Before a release, run the container smoke script (requires Docker):
+
+```bash
+bash tests/test_docker_smoke.sh
+```
+
+This builds the image and verifies `deepseek-cursor-gateway --help`, Tesseract language packs, and **host-side** access through the published port to `/healthz`, `/readyz`, `/v1/models`, and `/metrics`.
+
+### Prometheus scraping
+
+The gateway serves metrics at `/metrics` with no extra configuration. A minimal Prometheus `scrape_configs` entry:
+
+```yaml
+scrape_configs:
+  - job_name: deepseek-cursor-gateway
+    scrape_interval: 30s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['localhost:9000']   # host machine
+```
+
+When Prometheus runs in the same Compose network, scrape by service name instead:
+
+```yaml
+    static_configs:
+      - targets: ['deepseek-cursor-gateway:9000']
+```
+
+Bind the gateway to localhost or protect `/metrics` at your reverse proxy if the port is exposed beyond your homelab.
+
+### Observing traffic control
+
+Use `/metrics` and `request_manifest` logs — no verbose mode required:
+
+```bash
+# Queue wait, active upstream slots, retries, cooldowns
+curl -s http://localhost:9000/metrics | grep -E 'queue|upstream_active|retry|cooldown'
+
+# Per-request summary (status, model, stream, elapsed_ms, upstream_status)
+docker compose logs -f deepseek-cursor-gateway | grep request_manifest
+```
+
+For full request/response bodies during debugging, set `GATEWAY_VERBOSE=1` in `.env` and recreate the container. Retry events also log as `retry attempt=... delay_ms=...`.
+
+See [Upstream Traffic Control](rate-limiting.md#logs-and-metrics-to-watch) for tuning guidance.
 
 ---
 

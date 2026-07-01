@@ -11,7 +11,7 @@ import sys
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 import zlib
 
@@ -21,6 +21,7 @@ from .config import (
     default_config_path,
     default_reasoning_content_path,
 )
+from .metrics import GatewayMetrics, wire_gateway_metrics
 from .image_handler import (
     ImageInputRejected,
     ImageSecurityViolation,
@@ -68,6 +69,125 @@ class GatewayResponseResult:
     usage: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class UpstreamProbeResult:
+    """Result of a reachability probe (not an auth or model-permission check)."""
+
+    reachable: bool
+    probe_url: str | None = None
+    probe_status: int | None = None
+    probe_error_type: str | None = None
+
+
+def probe_upstream(base_url: str, *, timeout: float = 5.0) -> UpstreamProbeResult:
+    """Probe upstream HTTP reachability; 4xx responses count as reachable."""
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        candidates = [f"{base}/models"]
+    else:
+        candidates = [f"{base}/v1/models", f"{base}/models"]
+
+    last_result = UpstreamProbeResult(
+        reachable=False,
+        probe_url=candidates[-1],
+        probe_error_type="unreachable",
+    )
+    for url in candidates:
+        try:
+            req = Request(url, method="GET")
+            urlopen(req, timeout=timeout)
+            return UpstreamProbeResult(
+                reachable=True,
+                probe_url=url,
+                probe_status=200,
+                probe_error_type=None,
+            )
+        except HTTPError as exc:
+            if exc.code < 500:
+                return UpstreamProbeResult(
+                    reachable=True,
+                    probe_url=url,
+                    probe_status=exc.code,
+                    probe_error_type="http_error",
+                )
+            last_result = UpstreamProbeResult(
+                reachable=False,
+                probe_url=url,
+                probe_status=exc.code,
+                probe_error_type="http_error",
+            )
+        except URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            error_type = (
+                "timeout"
+                if isinstance(reason, (TimeoutError, OSError))
+                and getattr(reason, "errno", None) in {None, 110, 60}
+                else "url_error"
+            )
+            last_result = UpstreamProbeResult(
+                reachable=False,
+                probe_url=url,
+                probe_error_type=error_type,
+            )
+        except (HTTPException, OSError, TimeoutError):
+            last_result = UpstreamProbeResult(
+                reachable=False,
+                probe_url=url,
+                probe_error_type="os_error",
+            )
+    return last_result
+
+
+def probe_upstream_reachable(base_url: str, *, timeout: float = 5.0) -> bool:
+    return probe_upstream(base_url, timeout=timeout).reachable
+
+
+def assess_gateway_readiness(
+    server: DeepSeekGatewayServer,
+) -> tuple[bool, dict[str, Any]]:
+    """Return readiness and per-component check results for ``/readyz``."""
+    config = server.config
+    checks: dict[str, Any] = {}
+    ready = True
+
+    try:
+        server.reasoning_store.ping()
+        checks["reasoning_cache"] = {"ok": True}
+    except Exception as exc:
+        checks["reasoning_cache"] = {"ok": False, "error": type(exc).__name__}
+        ready = False
+
+    traffic_controller = getattr(server, "traffic_controller", None)
+    if traffic_controller is None:
+        checks["traffic_controller"] = {"ok": False, "error": "missing"}
+        ready = False
+    else:
+        checks["traffic_controller"] = {"ok": True}
+
+    if config.image_handling == "ocr":
+        ocr_cache = getattr(server, "ocr_cache", None)
+        if ocr_cache is None:
+            checks["ocr_cache"] = {"ok": False, "error": "missing"}
+            ready = False
+        else:
+            try:
+                ocr_cache.ping()
+                checks["ocr_cache"] = {"ok": True}
+            except Exception as exc:
+                checks["ocr_cache"] = {"ok": False, "error": type(exc).__name__}
+                ready = False
+        vision_ready = getattr(server, "vision_ready", True)
+        vision_state = getattr(server, "vision_warmup_state", "unknown")
+        checks["vision_warmup"] = {"ok": vision_ready, "state": vision_state}
+        if not vision_ready:
+            ready = False
+    else:
+        checks["ocr_cache"] = {"ok": True, "state": "not_applicable"}
+        checks["vision_warmup"] = {"ok": True, "state": "not_applicable"}
+
+    return ready, checks
+
+
 def vision_config_from_gateway(config: GatewayConfig) -> VisionConfig:
     return VisionConfig(
         backend=config.vision_backend,
@@ -81,12 +201,12 @@ def vision_config_from_gateway(config: GatewayConfig) -> VisionConfig:
     )
 
 
-def maybe_warm_up_vision(config: GatewayConfig) -> GatewayConfig:
+def maybe_warm_up_vision(config: GatewayConfig) -> tuple[GatewayConfig, str]:
     if config.image_handling != "ocr" or config.vision_warmup == "off":
-        return config
+        return config, "not_applicable"
     if config.vision_backend == "tesseract":
         LOG.info("vision warm-up skipped (local tesseract backend)")
-        return config
+        return config, "skipped_local"
 
     primary = replace(vision_config_from_gateway(config), fallback_backend="")
     LOG.info(
@@ -97,7 +217,7 @@ def maybe_warm_up_vision(config: GatewayConfig) -> GatewayConfig:
     try:
         warm_up_vision_backend(primary)
         LOG.info("vision warm-up complete backend=%s", primary.backend)
-        return config
+        return config, "ok"
     except OcrError as exc:
         fallback_backend = config.vision_fallback_backend
         if fallback_backend:
@@ -118,7 +238,7 @@ def maybe_warm_up_vision(config: GatewayConfig) -> GatewayConfig:
                     "vision warm-up using fallback backend=%s",
                     fallback_backend,
                 )
-                return fallback_config
+                return fallback_config, "ok_fallback"
             except OcrError as fallback_exc:
                 LOG.warning(
                     "vision fallback warm-up failed backend=%s reason=%s",
@@ -134,7 +254,7 @@ def maybe_warm_up_vision(config: GatewayConfig) -> GatewayConfig:
 
         if config.vision_warmup == "require":
             raise OcrError("Vision warm-up is required but failed") from exc
-        return config
+        return config, "warn_failed"
 
 
 class DeepSeekGatewayServer(ThreadingHTTPServer):
@@ -143,6 +263,10 @@ class DeepSeekGatewayServer(ThreadingHTTPServer):
     trace_writer: TraceWriter | None
     traffic_controller: TrafficController
     ocr_cache: OcrCache | None
+    metrics: GatewayMetrics
+    started_at: float = 0.0
+    vision_ready: bool = True
+    vision_warmup_state: str = "not_applicable"
 
 
 class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
@@ -159,6 +283,13 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
     @property
     def trace_writer(self) -> TraceWriter | None:
         return getattr(self.server, "trace_writer", None)
+
+    @property
+    def metrics(self) -> GatewayMetrics:
+        metrics = getattr(self.server, "metrics", None)
+        if metrics is None:
+            return wire_gateway_metrics(self.server)
+        return metrics
 
     @property
     def traffic_controller(self) -> TrafficController:
@@ -189,12 +320,22 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
         request_path = urlparse(self.path).path
         if self.config.verbose:
             LOG.info("incoming GET %s from %s", request_path, self.client_address[0])
+        if request_path == "/metrics":
+            self._send_metrics()
+            return
         if request_path in {"/healthz", "/v1/healthz"}:
-            self._send_json(200, {"ok": True})
+            self._send_health()
+            return
+        if request_path in {"/readyz", "/v1/readyz"}:
+            self._send_ready()
+            return
+        if request_path in {"/info", "/v1/info"}:
+            self._send_info()
             return
         if request_path in {"/models", "/v1/models"}:
             self._send_models()
             return
+        self.metrics.record_request(request_path, 404)
         self._send_json(404, {"error": {"message": "Not found"}})
 
     def do_POST(self) -> None:
@@ -218,6 +359,7 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                 trace=trace,
             )
             self._finish_trace(trace, "rejected", http_status=404)
+            self.metrics.record_request(request_path, 404)
             return
         cursor_authorization = self._cursor_authorization()
         if cursor_authorization is None:
@@ -232,6 +374,7 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                 trace=trace,
             )
             self._finish_trace(trace, "rejected", http_status=401)
+            self.metrics.record_request(request_path, 401)
             return
 
         try:
@@ -240,6 +383,7 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
             LOG.warning(
                 "rejected request path=%s status=413 reason=%s", request_path, exc
             )
+            self.metrics.record_request(request_path, 413)
             self._send_json(413, {"error": {"message": str(exc)}}, trace=trace)
             self._finish_trace(trace, "rejected", http_status=413, reason=str(exc))
             return
@@ -247,6 +391,7 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
             LOG.warning(
                 "rejected request path=%s status=400 reason=%s", request_path, exc
             )
+            self.metrics.record_request(request_path, 400)
             self._send_json(400, {"error": {"message": str(exc)}}, trace=trace)
             self._finish_trace(trace, "rejected", http_status=400, reason=str(exc))
             return
@@ -331,6 +476,12 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
         if trace is not None:
             trace.record_transform(prepared)
         log_context_summary(prepared, elapsed_ms=context_elapsed_ms)
+        if prepared.missing_reasoning_messages:
+            self.metrics.record_missing_reasoning(prepared.missing_reasoning_messages)
+        if prepared.recovered_reasoning_messages:
+            self.metrics.record_recovery(prepared.recovered_reasoning_messages)
+        elif prepared.recovery_notice:
+            self.metrics.record_recovery(1)
         if (
             prepared.missing_reasoning_messages
             and self.config.missing_reasoning_strategy == "reject"
@@ -365,7 +516,18 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                 },
                 trace=trace,
             )
-            self._finish_trace(trace, "rejected", http_status=409)
+            self._finish_trace(
+                trace,
+                "rejected",
+                http_status=409,
+                manifest=self._build_request_manifest(
+                    status="rejected",
+                    started=started,
+                    image_count=image_count,
+                    prepared=prepared,
+                    upstream_status=409,
+                ),
+            )
             return
 
         if self.config.verbose:
@@ -415,6 +577,7 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
             text="└ {frame}",
         ).start()
 
+        upstream_started = time.perf_counter()
         try:
             if self.config.verbose:
                 LOG.info("forwarding to %s", upstream_url)
@@ -465,15 +628,30 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                                 "client_disconnected",
                                 http_status=upstream_status,
                                 stream=bool(prepared.payload.get("stream")),
+                                manifest=self._build_request_manifest(
+                                    status="client_disconnected",
+                                    started=started,
+                                    image_count=image_count,
+                                    prepared=prepared,
+                                    upstream_status=upstream_status,
+                                ),
                             )
                             return
                         spinner.stop()
                         log_stats_summary(sent_response.usage)
+                        self.metrics.record_request(request_path, upstream_status)
                         self._finish_trace(
                             trace,
                             "completed",
                             http_status=upstream_status,
                             stream=bool(prepared.payload.get("stream")),
+                            manifest=self._build_request_manifest(
+                                status="completed",
+                                started=started,
+                                image_count=image_count,
+                                prepared=prepared,
+                                upstream_status=upstream_status,
+                            ),
                         )
                 finally:
                     spinner.stop()
@@ -485,12 +663,20 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                 bool(prepared.payload.get("stream")),
                 elapsed_ms(started),
             )
+            self.metrics.record_request(request_path, exc.code)
             self._send_upstream_error(exc, trace=trace)
             self._finish_trace(
                 trace,
                 "upstream_error",
                 http_status=exc.code,
                 stream=bool(prepared.payload.get("stream")),
+                manifest=self._build_request_manifest(
+                    status="upstream_error",
+                    started=started,
+                    image_count=image_count,
+                    prepared=prepared,
+                    upstream_status=exc.code,
+                ),
             )
             return
         except URLError as exc:
@@ -500,12 +686,24 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                 elapsed_ms(started),
                 exc.reason,
             )
+            self.metrics.record_request(request_path, 502)
             self._send_json(
                 502,
                 {"error": {"message": f"Upstream request failed: {exc.reason}"}},
                 trace=trace,
             )
-            self._finish_trace(trace, "upstream_error", http_status=502)
+            self._finish_trace(
+                trace,
+                "upstream_error",
+                http_status=502,
+                manifest=self._build_request_manifest(
+                    status="upstream_error",
+                    started=started,
+                    image_count=image_count,
+                    prepared=prepared,
+                    upstream_status=502,
+                ),
+            )
             return
         except UpstreamQueueTimeout as exc:
             spinner.stop()
@@ -514,6 +712,7 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                 exc.timeout_seconds,
                 request_path,
             )
+            self.metrics.record_request(request_path, 503)
             self._send_json(
                 503,
                 {
@@ -525,11 +724,26 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                 },
                 trace=trace,
             )
-            self._finish_trace(trace, "queue_timeout", http_status=503)
+            self._finish_trace(
+                trace,
+                "queue_timeout",
+                http_status=503,
+                manifest=self._build_request_manifest(
+                    status="queue_timeout",
+                    started=started,
+                    image_count=image_count,
+                    prepared=prepared,
+                    upstream_status=503,
+                ),
+            )
             return
         except Exception:
             spinner.stop()
             raise
+        finally:
+            self.metrics.observe_upstream_duration(
+                time.perf_counter() - upstream_started
+            )
 
     def _start_trace(self, request_path: str) -> TraceRequest | None:
         writer = self.trace_writer
@@ -550,14 +764,64 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
         self,
         trace: TraceRequest | None,
         status: str,
+        *,
+        manifest: dict[str, Any] | None = None,
         **extra: Any,
     ) -> None:
+        if manifest is not None:
+            extra = {**extra, "manifest": manifest}
+            LOG.info(
+                (
+                    "request_manifest status=%s model=%s stream=%s image_count=%s "
+                    "recovery=%s missing_reasoning=%s upstream_status=%s elapsed_ms=%s"
+                ),
+                manifest.get("status"),
+                manifest.get("model"),
+                manifest.get("stream"),
+                manifest.get("image_count"),
+                manifest.get("recovery"),
+                manifest.get("missing_reasoning"),
+                manifest.get("upstream_status"),
+                manifest.get("elapsed_ms"),
+            )
         if trace is None:
             return
         try:
             trace.finish(status, **extra)
         except OSError as exc:
             LOG.warning("failed to write request trace: %s", exc)
+
+    def _build_request_manifest(
+        self,
+        *,
+        status: str,
+        started: float,
+        image_count: int = 0,
+        prepared: Any | None = None,
+        upstream_status: int | None = None,
+        stream: bool | None = None,
+    ) -> dict[str, Any]:
+        manifest: dict[str, Any] = {
+            "status": status,
+            "elapsed_ms": elapsed_ms(started),
+            "image_count": image_count,
+        }
+        if prepared is not None:
+            manifest["model"] = prepared.original_model
+            manifest["stream"] = (
+                stream if stream is not None else bool(prepared.payload.get("stream"))
+            )
+            manifest["recovery"] = bool(
+                prepared.recovery_notice
+                or prepared.recovered_reasoning_messages
+                or prepared.continued_recovery_boundary
+            )
+            manifest["missing_reasoning"] = prepared.missing_reasoning_messages
+        elif stream is not None:
+            manifest["stream"] = stream
+        if upstream_status is not None:
+            manifest["upstream_status"] = upstream_status
+        return manifest
 
     def _cursor_authorization(self) -> str | None:
         auth_header = self.headers.get("Authorization", "")
@@ -641,6 +905,100 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _send_health(self) -> None:
+        uptime = time.monotonic() - self.server.started_at
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        check_upstream = "upstream" in params
+
+        payload: dict[str, Any] = {
+            "ok": True,
+            "version": __version__,
+            "uptime_seconds": round(uptime, 2),
+        }
+
+        if check_upstream:
+            probe = probe_upstream(self.config.upstream_base_url)
+            payload["upstream_reachable"] = probe.reachable
+            payload["probe_url"] = probe.probe_url
+            if probe.probe_status is not None:
+                payload["probe_status"] = probe.probe_status
+            if probe.probe_error_type is not None:
+                payload["probe_error_type"] = probe.probe_error_type
+
+        self._send_json(200, payload)
+
+    def _send_ready(self) -> None:
+        ready, checks = assess_gateway_readiness(self.server)  # type: ignore[arg-type]
+        status_code = 200 if ready else 503
+        self._send_json(
+            status_code,
+            {
+                "ready": ready,
+                "version": __version__,
+                "checks": checks,
+            },
+        )
+
+    def _send_metrics(self) -> None:
+        body = self.metrics.scrape().encode("utf-8")
+        sent_headers = self._send_response_headers(
+            200,
+            [
+                ("Content-Type", "text/plain; charset=utf-8"),
+                ("Content-Length", str(len(body))),
+            ],
+            "sending metrics response",
+        )
+        if sent_headers:
+            self._write_to_client(body, "sending metrics body")
+
+    def _send_info(self) -> None:
+        config = self.config
+        self._send_json(
+            200,
+            {
+                "version": __version__,
+                "upstream": {
+                    "base_url": config.upstream_base_url,
+                    "model": config.upstream_model,
+                    "thinking": config.thinking,
+                    "reasoning_effort": config.reasoning_effort,
+                    "request_timeout": config.request_timeout,
+                    "max_request_body_bytes": config.max_request_body_bytes,
+                    "missing_reasoning_strategy": config.missing_reasoning_strategy,
+                },
+                "image_handling": {
+                    "mode": config.image_handling,
+                    "vision_backend": config.vision_backend,
+                    "vision_base_url": config.vision_base_url,
+                    "vision_model": config.vision_model,
+                    "vision_warmup": config.vision_warmup,
+                    "vision_fallback_backend": config.vision_fallback_backend or None,
+                    "vision_timeout": config.vision_timeout,
+                    "tesseract_lang": config.tesseract_lang,
+                },
+                "display": {
+                    "reasoning": config.display_reasoning,
+                    "collapsible_reasoning": config.collapsible_reasoning,
+                },
+                "reasoning_cache": {
+                    "max_age_seconds": config.reasoning_cache_max_age_seconds,
+                    "max_rows": config.reasoning_cache_max_rows,
+                },
+                "traffic_control": {
+                    "upstream_max_inflight": config.upstream_max_inflight,
+                    "upstream_retry_enabled": config.upstream_retry_enabled,
+                    "upstream_retry_max_attempts": config.upstream_retry_max_attempts,
+                },
+                "network": {
+                    "ngrok": config.ngrok,
+                    "cors": config.cors,
+                    "verbose": config.verbose,
+                },
+            },
+        )
+
     def _send_models(self) -> None:
         created = int(time.time())
         model_ids = list(
@@ -652,6 +1010,9 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                 ]
             )
         )
+        # Append -nothink variants for each base model
+        nothink_ids = [f"{mid}-nothink" for mid in model_ids]
+        all_ids = list(dict.fromkeys(model_ids + nothink_ids))
         models = [
             {
                 "id": model_id,
@@ -659,7 +1020,7 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
                 "created": created,
                 "owned_by": "deepseek",
             }
-            for model_id in model_ids
+            for model_id in all_ids
         ]
         self._send_json(200, {"object": "list", "data": models})
 
@@ -730,6 +1091,7 @@ class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
         *,
         trace: TraceRequest | None = None,
     ) -> None:
+        self.metrics.record_upstream_error(exc.code)
         body = read_response_body(exc)
         if self.config.verbose:
             log_bytes("upstream error body", body)
@@ -1661,8 +2023,9 @@ def main(argv: list[str] | None = None) -> int:
 
     configure_logging(verbose=config.verbose)
     init_vision_concurrency(config.vision_concurrency)
+    vision_warmup_state = "not_applicable"
     try:
-        config = maybe_warm_up_vision(config)
+        config, vision_warmup_state = maybe_warm_up_vision(config)
     except OcrError as exc:
         LOG.error("%s", exc)
         return 2
@@ -1704,6 +2067,10 @@ def main(argv: list[str] | None = None) -> int:
     server.config = config
     server.reasoning_store = store
     server.trace_writer = trace_writer
+    server.started_at = time.monotonic()
+    server.vision_ready = vision_warmup_state not in {"failed_required"}
+    server.vision_warmup_state = vision_warmup_state
+    wire_gateway_metrics(server)
     smoother: RequestStartSmoother | None = None
     if (
         config.request_start_rate_limit_enabled

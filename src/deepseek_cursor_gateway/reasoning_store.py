@@ -8,6 +8,8 @@ import threading
 import time
 from typing import Any
 
+from .metrics import GatewayMetrics
+
 
 def normalize_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
     function = tool_call.get("function") or {}
@@ -339,9 +341,16 @@ class ReasoningStore:
         self._conn.commit()
         self.prune()
 
+    def ping(self) -> None:
+        with self._lock:
+            self._conn.execute("SELECT 1")
+
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            try:
+                self._conn.close()
+            except sqlite3.ProgrammingError:
+                pass
 
     def put(self, key: str, reasoning: str, message: dict[str, Any]) -> None:
         if not isinstance(reasoning, str):
@@ -410,7 +419,9 @@ class ReasoningStore:
         for key in keys:
             reasoning = self.get(key)
             if reasoning is not None:
+                GatewayMetrics.global_instance().record_cache_hit()
                 return reasoning
+        GatewayMetrics.global_instance().record_cache_miss()
         return None
 
     def backfill_portable_aliases(

@@ -4,6 +4,61 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.2.6] — 2026-06-30
+
+### Added
+
+- **`/readyz` endpoint** — readiness probe with per-component checks (`reasoning_cache`, `traffic_controller`, `ocr_cache`, `vision_warmup`). Returns HTTP 503 when not ready.
+- **Extended metrics** — upstream request duration, queue wait duration, active upstream requests gauge, OCR cache hit/miss, recovery and missing-reasoning counters.
+- **Upstream reachability diagnostics** — `/healthz?upstream=1` now includes `probe_url`, `probe_status`, and `probe_error_type` (reachability only; not auth).
+- **Request manifest** — each completed request logs a `request_manifest` line and writes a `manifest` summary into trace completion (`status`, `model`, `stream`, `image_count`, `recovery`, `upstream_status`, `elapsed_ms`).
+- **Docker smoke script** — `tests/test_docker_smoke.sh` validates image help, Tesseract languages, and `/healthz`, `/readyz`, `/models`, `/metrics`.
+- **Observability tests** — `tests/test_observability.py` covers probes, metrics, `/info` redaction, readiness, and manifests.
+
+### Changed
+
+- `probe_upstream()` uses GET (not HEAD) and treats 4xx as reachable; documented as reachability, not credential validation.
+- `maybe_warm_up_vision()` returns `(config, warmup_state)` for readiness reporting.
+- Documentation — root README `--no-ngrok` for native runs; observability summary; rate-limiting/deployment troubleshooting aligned with `/metrics` and `request_manifest`; DocMD site URL and CI deploy path; exclude `docs/dev/` from doc site build.
+
+### Fixed
+
+- Queue timeout handler restores 503 JSON response and trace completion.
+- Metrics singleton unified via `wire_gateway_metrics()` so `/metrics` reflects retry, cache, and cooldown activity.
+
+---
+
+## [0.2.5] — 2026-06-30
+
+### Added
+
+- **Prometheus metrics** — `/metrics` endpoint in Prometheus text format: request counts, upstream errors, retry/cooldown counters, reasoning cache hit ratio.
+
+### Changed
+
+- Documentation — deployment healthcheck/Prometheus scrape examples; observability cross-links
+
+### Fixed
+
+- `ReasoningStore.close()` no longer raises on repeated calls.
+- `GatewayMetrics.global_instance()` race condition under concurrent initialization.
+- `do_POST` error paths (400, 413, 502, 503, upstream HTTP errors) now recorded in request metrics.
+
+---
+
+## [0.2.4] — 2026-06-30
+
+### Added
+
+- **Health & info endpoints** — `/healthz` returns `ok`, `version`, and `uptime_seconds`; add `?upstream=1` to probe DeepSeek reachability (`upstream_reachable`). New `/info` endpoint exposes grouped runtime configuration (no secrets).
+- **Model list `-nothink` variants** — `/v1/models` now lists each base model with a `-nothink` suffix variant for per-request thinking toggle (OpenAI-compatible; other clients can ignore extra entries).
+
+### Changed
+
+- `/info` response grouped into `upstream`, `image_handling`, `display`, `reasoning_cache`, `traffic_control`, and `network` sections.
+
+---
+
 ## [0.2.3] — 2026-06-30
 
 ### Added

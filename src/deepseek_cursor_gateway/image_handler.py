@@ -21,6 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .logging import LOG
+from .metrics import GatewayMetrics
 
 # ---------------------------------------------------------------------------
 # Image detection
@@ -144,6 +145,10 @@ class OcrCache:
                 (excess,),
             )
         self._conn.commit()
+
+    def ping(self) -> None:
+        with self._lock:
+            self._conn.execute("SELECT 1")
 
     def close(self) -> None:
         with self._lock:
@@ -385,10 +390,13 @@ def _describe_image(
         cached = ocr_cache.get(key)
         if cached is not None:
             LOG.info("ocr cache hit key=%s", key[:12])
+            GatewayMetrics.global_instance().record_ocr_cache_hit()
             return cached
+        GatewayMetrics.global_instance().record_ocr_cache_miss()
 
     LOG.info("ocr calling vision model=%s backend=%s", vision.model, vision.backend)
     acquired = False
+    ocr_started = time.perf_counter()
     if _vision_semaphore is not None:
         _vision_semaphore.acquire()
         acquired = True
@@ -415,6 +423,10 @@ def _describe_image(
     finally:
         if acquired:
             _vision_semaphore.release()
+
+    GatewayMetrics.global_instance().observe_ocr_duration(
+        time.perf_counter() - ocr_started
+    )
 
     if ocr_cache is not None:
         ocr_cache.put(key, summary)
