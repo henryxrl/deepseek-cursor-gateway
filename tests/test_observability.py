@@ -120,9 +120,7 @@ def _start_gateway(
         queue_timeout_seconds=300,
         retry_config=RetryConfig(enabled=False),
     )
-    gateway.trace_writer = (
-        TraceWriter(trace_dir) if trace_dir is not None else None
-    )
+    gateway.trace_writer = TraceWriter(trace_dir) if trace_dir is not None else None
     gateway.ocr_cache = None
     return _Fixture(gateway)
 
@@ -132,7 +130,9 @@ class ProbeUpstreamTests(unittest.TestCase):
         GatewayMetrics.reset_for_tests()
 
     @mock.patch("deepseek_cursor_gateway.server.urlopen")
-    def test_probe_uses_models_path_when_base_url_ends_with_v1(self, urlopen_mock) -> None:
+    def test_probe_uses_models_path_when_base_url_ends_with_v1(
+        self, urlopen_mock
+    ) -> None:
         urlopen_mock.return_value = BytesIO(b"{}")
         result = probe_upstream("https://api.example.com/v1")
         self.assertTrue(result.reachable)
@@ -205,7 +205,9 @@ class MetricsEndpointTests(unittest.TestCase):
 
         status, body = _get(f"{self.gateway.url}/metrics")
         self.assertEqual(status, 200)
-        self.assertIn('gateway_requests_total{path="/v1/chat/completions",status="200"} 1', body)
+        self.assertIn(
+            'gateway_requests_total{path="/v1/chat/completions",status="200"} 1', body
+        )
         self.assertIn("gateway_retry_attempts_total 1", body)
         self.assertIn("gateway_reasoning_cache_hits_total 1", body)
         self.assertIn("gateway_reasoning_cache_misses_total 1", body)
@@ -348,7 +350,9 @@ class RequestManifestTests(unittest.TestCase):
             time.sleep(0.01)
             trace_files = sorted(self.writer.session_dir.glob("request-*.json"))
         self.assertTrue(trace_files)
-        completion = json.loads(trace_files[0].read_text(encoding="utf-8"))["completion"]
+        completion = json.loads(trace_files[0].read_text(encoding="utf-8"))[
+            "completion"
+        ]
         manifest = completion["manifest"]
         self.assertEqual(manifest["status"], "completed")
         self.assertEqual(manifest["model"], "deepseek-v4-pro")
@@ -380,7 +384,9 @@ class RequestManifestTests(unittest.TestCase):
                 "request_manifest" in line for line in captured.output
             ):
                 time.sleep(0.01)
-        self.assertTrue(any("request_manifest status=completed" in line for line in captured.output))
+        self.assertTrue(
+            any("request_manifest status=completed" in line for line in captured.output)
+        )
 
 
 class RateLimiterMetricsTests(unittest.TestCase):
