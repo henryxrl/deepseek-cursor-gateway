@@ -381,11 +381,7 @@ class GatewayConfig:
                 DEFAULT_DISPLAY_REASONING,
             ),
             collapsible_reasoning=as_bool(
-                setting_value_any(
-                    settings,
-                    "collasible_reasoning",
-                    "collapsible_reasoning",
-                ),
+                setting_value(settings, "collapsible_reasoning"),
                 DEFAULT_COLLAPSIBLE_REASONING,
             ),
             cors=as_bool(

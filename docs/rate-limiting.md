@@ -1,18 +1,12 @@
 # Upstream Traffic Control
 
-DeepSeek enforces account-level concurrency limits (500 for V4 Pro, 2500 for
-V4 Flash). While a single Cursor session won't approach those numbers, agent
-mode can fire multiple requests in quick succession — and long-context thinking
-requests take time. The gateway adds three layers of protection.
+DeepSeek enforces account-level concurrency limits (500 for V4 Pro, 2500 for V4 Flash). While a single Cursor session won't approach those numbers, agent mode can fire multiple requests in quick succession — and long-context thinking requests take time. The gateway adds three layers of protection.
 
 ---
 
 ## Concurrency Gate
 
-`upstream_max_inflight` limits how many upstream DeepSeek requests are active
-at the same time. The limit covers the **entire upstream lifecycle**: from the
-moment `urlopen()` is called until the full response body is consumed (including
-streaming). Default is `2`.
+`upstream_max_inflight` limits how many upstream DeepSeek requests are active at the same time. The limit covers the **entire upstream lifecycle**: from the moment `urlopen()` is called until the full response body is consumed (including streaming). Default is `2`.
 
 ```bash
 GATEWAY_UPSTREAM_MAX_INFLIGHT=2
@@ -26,9 +20,7 @@ GATEWAY_UPSTREAM_MAX_INFLIGHT=0
 
 ### Queue Timeout
 
-If all slots are occupied, new requests wait instead of failing immediately.
-`upstream_queue_timeout_seconds` caps the wait time. When the timeout expires,
-the gateway returns HTTP 503 to Cursor without calling DeepSeek.
+If all slots are occupied, new requests wait instead of failing immediately. `upstream_queue_timeout_seconds` caps the wait time. When the timeout expires, the gateway returns HTTP 503 to Cursor without calling DeepSeek.
 
 ```bash
 GATEWAY_UPSTREAM_QUEUE_TIMEOUT_SECONDS=300
@@ -72,9 +64,7 @@ delay = min(delay, max_delay)
 
 ### Retry-After Header
 
-When `GATEWAY_UPSTREAM_RESPECT_RETRY_AFTER=1` (the default), the gateway reads the
-`Retry-After` header from 429 responses. If present, it waits that duration
-instead of computing its own backoff.
+When `GATEWAY_UPSTREAM_RESPECT_RETRY_AFTER=1` (the default), the gateway reads the `Retry-After` header from 429 responses. If present, it waits that duration instead of computing its own backoff.
 
 The header is parsed as either:
 
@@ -85,9 +75,7 @@ The header is parsed as either:
 
 ## Global Cooldown
 
-When one request gets a 429, **all** threads pause before calling DeepSeek
-again. This prevents a stampede: without it, every queued Cursor request would
-immediately retry, likely hitting 429 again.
+When one request gets a 429, **all** threads pause before calling DeepSeek again. This prevents a stampede: without it, every queued Cursor request would immediately retry, likely hitting 429 again.
 
 ```bash
 GATEWAY_UPSTREAM_COOLDOWN_ON_429=1
@@ -102,18 +90,13 @@ traffic cooldown_wait_ms=... reason=429
 
 ### Important: Retries happen before Cursor receives headers
 
-All retry logic runs before the gateway sends response headers to Cursor. Once
-a streaming response has started, retry is not possible — Cursor has already
-begun processing.
+All retry logic runs before the gateway sends response headers to Cursor. Once a streaming response has started, retry is not possible — Cursor has already begun processing.
 
 ---
 
 ## Optional Request-Start Smoothing
 
-The concurrency gate is the primary limiter. If you still observe very bursty
-request starts, you can enable an optional token-bucket smoother. It delays
-before an upstream request attempt starts, and it does **not** hold an upstream
-slot while waiting.
+The concurrency gate is the primary limiter. If you still observe very bursty request starts, you can enable an optional token-bucket smoother. It delays before an upstream request attempt starts, and it does **not** hold an upstream slot while waiting.
 
 It is disabled by default:
 
@@ -129,8 +112,7 @@ GATEWAY_REQUEST_START_RATE_PER_MINUTE=30
 GATEWAY_REQUEST_START_BURST=3
 ```
 
-Use this only after observing burst-related issues. For most Cursor use, the
-default concurrency gate plus 429 cooldown is enough.
+Use this only after observing burst-related issues. For most Cursor use, the default concurrency gate plus 429 cooldown is enough.
 
 ---
 

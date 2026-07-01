@@ -15,8 +15,7 @@ vim .env
 docker compose up -d
 ```
 
-`docker-compose.yml` pulls `ghcr.io/henryxrl/deepseek-cursor-gateway:latest`
-— no local build needed.
+`docker-compose.yml` pulls `ghcr.io/henryxrl/deepseek-cursor-gateway:latest` — no local build needed.
 
 After startup, set Cursor's **API Base URL** to `http://localhost:9000/v1`.
 
@@ -30,8 +29,7 @@ If you're building from source or testing local changes:
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
-`docker-compose.dev.yml` builds the image from the current directory with
-`build: .` (includes Tesseract in the image).
+`docker-compose.dev.yml` builds the image from the current directory with `build: .` (includes Tesseract in the image).
 
 ---
 
@@ -96,8 +94,7 @@ curl http://localhost:9000/v1/models
 # → shows DeepSeek models
 ```
 
-To check that the traffic controller is active, enable verbose logging
-in `.env`, recreate the container, and watch the logs:
+To check that the traffic controller is active, enable verbose logging in `.env`, recreate the container, and watch the logs:
 
 ```bash
 # Add this to .env:

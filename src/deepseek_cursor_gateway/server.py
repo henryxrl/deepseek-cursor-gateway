@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 import zlib
 
+from . import __version__
 from .config import (
     GatewayConfig,
     default_config_path,
@@ -145,7 +146,7 @@ class DeepSeekGatewayServer(ThreadingHTTPServer):
 
 
 class DeepSeekGatewayHandler(BaseHTTPRequestHandler):
-    server_version = "DeepSeekPythonGateway/0.1"
+    server_version = f"deepseek-cursor-gateway/{__version__}"
 
     @property
     def config(self) -> GatewayConfig:
@@ -1118,22 +1119,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help="Use Markdown details for mirrored reasoning when display is enabled",
-    )
-    parser.add_argument(
-        "--collasible-reasoning",
-        "--collasible-resoning",
-        dest="collapsible_reasoning",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--no-collasible-reasoning",
-        "--no-collasible-resoning",
-        dest="collapsible_reasoning",
-        action="store_false",
-        default=argparse.SUPPRESS,
-        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--cors",

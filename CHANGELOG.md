@@ -4,6 +4,47 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.2.3] — 2026-06-30
+
+### Added
+
+- **Per-request thinking override** — model name `-nothink` suffix and request-body `thinking` field allow overriding the global thinking setting without config changes.
+
+### Changed
+
+- `server_version` now reads dynamically from package `__version__` (`0.2.3`) instead of hardcoded `DeepSeekPythonGateway/0.1`.
+- Removed backward-compatible misspelled `collasible_reasoning` config key; only `collapsible_reasoning` is accepted.
+
+### Fixed
+
+- Dead `store_finished_reasoning` method removed from `StreamAccumulator`; tests migrated to `store_ready_reasoning`.
+- Documentation paragraphs unwrapped — mid-sentence hard line breaks removed across all docs for readability.
+- CHANGELOG backfilled with 0.2.1 and 0.2.2 release notes.
+
+---
+
+## [0.2.2] — 2026-06-30
+
+### Added
+
+- **Vision warm-up & fallback** — `GATEWAY_VISION_WARMUP` (off | warn | require) probes remote vision backends on startup; `GATEWAY_VISION_FALLBACK_BACKEND` (tesseract) provides automatic fallback when the primary vision backend fails, both during warm-up and at runtime.
+- **Portable turn-scoped reasoning cache** — cross-mode (Agent↔Plan) and cross-model (Pro↔Flash) reasoning content sharing via portable alias keys, enabling continuation after mode switches without losing reasoning history.
+
+### Fixed
+
+- Valid vision warm-up PNG bytes.
+- Missing verbose logging for streaming reasoning cache store.
+
+---
+
+## [0.2.1] — 2026-06-29
+
+### Added
+
+- `GATEWAY_VISION_CONCURRENCY` — limits parallel vision API calls via a bounded semaphore (default unlimited). Use 1 or 2 for local LLMs with limited resources.
+
+---
+
 ## [0.2.0] — 2026-06-28
 
 ### Added

@@ -132,7 +132,7 @@ class ConfigTests(unittest.TestCase):
                         "max_request_body_bytes: 1234",
                         "cors: true",
                         "display_reasoning: false",
-                        "collasible_reasoning: false",
+                        "collapsible_reasoning: false",
                         f"reasoning_content_path: {reasoning_content_path}",
                         "missing_reasoning_strategy: reject",
                         "reasoning_cache_max_age_seconds: 60",
@@ -180,7 +180,7 @@ class ConfigTests(unittest.TestCase):
                         "missing_reasoning_strategy: maybe",
                         "port: nope",
                         "verbose: maybe",
-                        "collasible_reasoning: maybe",
+                        "collapsible_reasoning: maybe",
                     ]
                 ),
                 encoding="utf-8",

@@ -22,6 +22,7 @@ from deepseek_cursor_gateway.transform import (
     RECOVERY_NOTICE_TEXT,
     extract_text_content,
     normalize_reasoning_effort,
+    parse_model_thinking_override,
     prepare_upstream_request,
     reasoning_cache_namespace,
     rewrite_response_body,
@@ -82,6 +83,39 @@ class ContentHelpersTests(unittest.TestCase):
         self.assertEqual(normalize_reasoning_effort("max"), "max")
         self.assertEqual(normalize_reasoning_effort("xhigh"), "max")
         self.assertEqual(normalize_reasoning_effort("nonsense"), "high")
+
+    def test_parse_model_thinking_override_no_suffix(self) -> None:
+        model, thinking = parse_model_thinking_override("deepseek-v4-pro")
+        self.assertEqual(model, "deepseek-v4-pro")
+        self.assertIsNone(thinking)
+
+    def test_parse_model_thinking_override_with_suffix(self) -> None:
+        model, thinking = parse_model_thinking_override("deepseek-v4-pro-nothink")
+        self.assertEqual(model, "deepseek-v4-pro")
+        self.assertEqual(thinking, "disabled")
+
+    def test_parse_model_thinking_override_case_insensitive(self) -> None:
+        model, thinking = parse_model_thinking_override("deepseek-v4-pro-NoThink")
+        self.assertEqual(model, "deepseek-v4-pro")
+        self.assertEqual(thinking, "disabled")
+
+    def test_parse_model_thinking_override_multiple_suffixes(self) -> None:
+        model, thinking = parse_model_thinking_override(
+            "deepseek-v4-pro-nothink-nothink"
+        )
+        self.assertEqual(model, "deepseek-v4-pro")
+        self.assertEqual(thinking, "disabled")
+
+    def test_parse_model_thinking_override_suffix_not_at_end(self) -> None:
+        """-nothink in the middle is NOT an override — only trailing suffix counts."""
+        model, thinking = parse_model_thinking_override("deepseek-nothink-v4-pro")
+        self.assertEqual(model, "deepseek-nothink-v4-pro")
+        self.assertIsNone(thinking)
+
+    def test_parse_model_thinking_override_suffix_only(self) -> None:
+        model, thinking = parse_model_thinking_override("-nothink")
+        self.assertEqual(model, "")
+        self.assertEqual(thinking, "disabled")
 
 
 class RequestPreparationTests(unittest.TestCase):
@@ -219,6 +253,197 @@ class RequestPreparationTests(unittest.TestCase):
             self.store,
         )
         self.assertEqual(prepared.missing_reasoning_messages, 0)
+
+    # --- per-request thinking override: model-name suffix ---
+
+    def test_model_suffix_nothink_disables_thinking(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro-nothink",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            GatewayConfig(thinking="enabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", prepared.payload)
+
+    def test_model_suffix_nothink_strips_suffix_from_upstream_model(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro-nothink",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            GatewayConfig(),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["model"], "deepseek-v4-pro")
+        self.assertEqual(prepared.upstream_model, "deepseek-v4-pro")
+
+    def test_model_suffix_nothink_case_insensitive(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro-NoThink",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            GatewayConfig(thinking="enabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "disabled"})
+        self.assertEqual(prepared.payload["model"], "deepseek-v4-pro")
+
+    def test_model_suffix_multiple_nothink(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro-nothink-nothink",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            GatewayConfig(thinking="enabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "disabled"})
+        self.assertEqual(prepared.payload["model"], "deepseek-v4-pro")
+
+    def test_model_no_suffix_uses_config_thinking(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            GatewayConfig(thinking="enabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "enabled"})
+        self.assertIn("reasoning_effort", prepared.payload)
+
+    def test_nothink_suffix_strips_reasoning_from_assistant_history(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro-nothink",
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {
+                        "role": "assistant",
+                        "content": "answer",
+                        "reasoning_content": "should be discarded",
+                    },
+                ],
+            },
+            GatewayConfig(thinking="enabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_content", prepared.payload["messages"][1])
+
+    # --- per-request thinking override: body field ---
+
+    def test_body_thinking_disabled_overrides_config_enabled(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [{"role": "user", "content": "hi"}],
+                "thinking": {"type": "disabled"},
+            },
+            GatewayConfig(thinking="enabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", prepared.payload)
+
+    def test_body_thinking_enabled_overrides_config_disabled(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [{"role": "user", "content": "hi"}],
+                "thinking": {"type": "enabled"},
+            },
+            GatewayConfig(thinking="disabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "enabled"})
+        self.assertIn("reasoning_effort", prepared.payload)
+
+    def test_body_thinking_overrides_model_suffix(self) -> None:
+        """Body field has higher priority than -nothink suffix."""
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro-nothink",
+                "messages": [{"role": "user", "content": "hi"}],
+                "thinking": {"type": "enabled"},
+            },
+            GatewayConfig(thinking="disabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "enabled"})
+        self.assertIn("reasoning_effort", prepared.payload)
+        self.assertEqual(prepared.payload["model"], "deepseek-v4-pro")
+
+    def test_body_invalid_thinking_falls_back_to_suffix(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro-nothink",
+                "messages": [{"role": "user", "content": "hi"}],
+                "thinking": {"type": "invalid_value"},
+            },
+            GatewayConfig(thinking="enabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "disabled"})
+
+    def test_body_invalid_thinking_falls_back_to_config(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [{"role": "user", "content": "hi"}],
+                "thinking": {"type": "bogus"},
+            },
+            GatewayConfig(thinking="enabled"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "enabled"})
+
+    def test_body_reasoning_effort_is_respected_when_thinking_enabled(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [{"role": "user", "content": "hi"}],
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "max",
+            },
+            GatewayConfig(thinking="enabled", reasoning_effort="low"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "enabled"})
+        self.assertEqual(prepared.payload["reasoning_effort"], "max")
+
+    def test_body_thinking_disabled_drops_reasoning_effort_from_body(self) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [{"role": "user", "content": "hi"}],
+                "thinking": {"type": "disabled"},
+                "reasoning_effort": "max",
+            },
+            GatewayConfig(),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", prepared.payload)
+
+    def test_body_thinking_without_reasoning_effort_injects_config_default(
+        self,
+    ) -> None:
+        prepared = prepare_upstream_request(
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [{"role": "user", "content": "hi"}],
+                "thinking": {"type": "enabled"},
+            },
+            GatewayConfig(thinking="disabled", reasoning_effort="max"),
+            self.store,
+        )
+        self.assertEqual(prepared.payload["thinking"], {"type": "enabled"})
+        self.assertEqual(prepared.payload["reasoning_effort"], "max")
 
 
 class RecoveryNoticeStrippingTests(unittest.TestCase):

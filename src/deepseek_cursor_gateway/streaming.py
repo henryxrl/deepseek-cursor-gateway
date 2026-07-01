@@ -86,27 +86,6 @@ class StreamAccumulator:
             )
         return stored
 
-    def store_finished_reasoning(
-        self,
-        store: ReasoningStore,
-        scope: str,
-        cache_namespace: str = "",
-        prior_messages: list[dict[str, Any]] | None = None,
-    ) -> int:
-        stored = 0
-        for index, choice in self.choices.items():
-            if choice.finish_reason is not None:
-                stored += self._store_choice(
-                    index,
-                    choice,
-                    store,
-                    scope,
-                    "final",
-                    cache_namespace,
-                    prior_messages,
-                )
-        return stored
-
     def store_ready_reasoning(
         self,
         store: ReasoningStore,

@@ -108,7 +108,7 @@ class StreamAccumulatorTests(unittest.TestCase):
         )
 
         scope = conversation_scope([{"role": "user", "content": "lookup"}])
-        stored = accumulator.store_finished_reasoning(store, scope)
+        stored = accumulator.store_ready_reasoning(store, scope)
 
         self.assertGreater(stored, 0)
         self.assertEqual(
@@ -148,8 +148,8 @@ class StreamAccumulatorTests(unittest.TestCase):
 
         first_scope = conversation_scope([{"role": "user", "content": "full"}])
         second_scope = conversation_scope([{"role": "user", "content": "active"}])
-        first_stored = accumulator.store_finished_reasoning(store, first_scope)
-        second_stored = accumulator.store_finished_reasoning(store, second_scope)
+        first_stored = accumulator.store_ready_reasoning(store, first_scope)
+        second_stored = accumulator.store_ready_reasoning(store, second_scope)
 
         self.assertGreater(first_stored, 0)
         self.assertGreater(second_stored, 0)
@@ -262,7 +262,7 @@ class StreamAccumulatorTests(unittest.TestCase):
         )
 
         scope = conversation_scope([{"role": "user", "content": "lookup"}])
-        stored = accumulator.store_finished_reasoning(store, scope)
+        stored = accumulator.store_ready_reasoning(store, scope)
 
         self.assertGreater(stored, 0)
         self.assertEqual(store.get(f"scope:{scope}:tool_call:call_empty"), "")

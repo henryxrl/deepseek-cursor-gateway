@@ -1,10 +1,8 @@
 # Configuration Reference
 
-The gateway can be configured via a `config.yaml` file, CLI flags, or environment
-variables (Docker). CLI flags override YAML values.
+The gateway can be configured via a `config.yaml` file, CLI flags, or environment variables (Docker). CLI flags override YAML values.
 
-When running in Docker, use the `GATEWAY_*` environment variables listed below.
-They map 1:1 to CLI flags.
+When running in Docker, use the `GATEWAY_*` environment variables listed below. They map 1:1 to CLI flags.
 
 ---
 
@@ -14,12 +12,65 @@ They map 1:1 to CLI flags.
 | ------------------------------------ | ---------------------------- | -------------------------- | ----------------------------------------------------- |
 | `GATEWAY_BASE_URL`                   | `base_url`                   | `https://api.deepseek.com` | DeepSeek API base URL                                 |
 | `GATEWAY_MODEL`                      | `model`                      | `deepseek-v4-pro`          | Fallback model when the request doesn't specify one   |
-| `GATEWAY_THINKING`                   | `thinking`                   | `enabled`                  | `enabled` or `disabled`                               |
-| `GATEWAY_REASONING_EFFORT`           | `reasoning_effort`           | `max`                      | `low`, `medium`, `high`, `max`, or `xhigh`            |
+| `GATEWAY_THINKING`                   | `thinking`                   | `enabled`                  | `enabled` or `disabled`. Can be overridden per-request — see below. |
+| `GATEWAY_REASONING_EFFORT`           | `reasoning_effort`           | `max`                      | `low`, `medium`, `high`, `max`, or `xhigh`. Internally normalised to two cache buckets: `low`/`medium` → `high`, `xhigh` → `max`. |
 | `GATEWAY_REQUEST_TIMEOUT`            | `request_timeout`            | `300`                      | Upstream request timeout in seconds                   |
 | `GATEWAY_MAX_REQUEST_BODY_BYTES`     | `max_request_body_bytes`     | `20971520`                 | Max accepted request body (20MB)                      |
 | `GATEWAY_MISSING_REASONING_STRATEGY` | `missing_reasoning_strategy` | `recover`                  | `recover` (auto-recover) or `reject` (409 error)      |
 | `GATEWAY_USER_MESSAGE_SUFFIX`        | `user_message_suffix`        | `""`                       | Text appended to every user message before forwarding |
+
+### Per-Request Thinking Override
+
+The global `thinking` setting applies to all requests by default, but you can override it on a per-request basis without changing your config or restarting the gateway. Two mechanisms are supported, with the following priority (highest wins):
+
+1. **Request body `thinking` field** — standard DeepSeek API field
+2. **Model name `-nothink` suffix** — Cursor-friendly convenience
+
+#### 1. Request Body Field
+
+If the client includes a `thinking` object in the request body, the gateway respects it as-is. This is the standard DeepSeek API mechanism — any client that knows how to set `thinking` can use it directly.
+
+```json
+{
+  "model": "deepseek-v4-pro",
+  "messages": [{"role": "user", "content": "hi"}],
+  "thinking": {"type": "disabled"}
+}
+```
+
+When `thinking` is explicitly set in the body:
+
+- `reasoning_effort` from the body is also respected (and normalized through the effort aliases).
+- If `reasoning_effort` is omitted but thinking is enabled, the gateway injects the configured default.
+- If thinking is disabled, any `reasoning_effort` is stripped from the upstream request.
+- An invalid `thinking.type` value (anything other than `enabled` or `disabled`) is ignored; the gateway falls through to the next priority level.
+
+#### 2. Model Name Suffix
+
+Append `-nothink` (case-insensitive) to the model name to disable deep thinking for that request. The suffix is stripped before the model name is forwarded to DeepSeek.
+
+| Model name sent by client     | Upstream model      | Thinking |
+| ----------------------------- | ------------------- | -------- |
+| `deepseek-v4-pro`             | `deepseek-v4-pro`   | config   |
+| `deepseek-v4-pro-nothink`     | `deepseek-v4-pro`   | disabled |
+| `deepseek-v4-pro-NOTHINK`     | `deepseek-v4-pro`   | disabled |
+| `deepseek-v4-pro-nothink-nothink` | `deepseek-v4-pro` | disabled |
+
+This is designed for Cursor, where the model picker lets you select between `deepseek-v4-pro` (thinking on) and `deepseek-v4-pro-nothink` (thinking off) per conversation without changing your endpoint URL or provider config.
+
+The suffix only takes effect when it appears at the **end** of the model name.
+`deepseek-nothink-v4-pro` is treated as a regular model name with no override.
+
+#### Priority Examples
+
+| Body `thinking`          | Model name                 | Config `thinking` | Effective |
+| ------------------------ | -------------------------- | ----------------- | --------- |
+| *(not set)*              | `deepseek-v4-pro`          | `enabled`         | enabled   |
+| *(not set)*              | `deepseek-v4-pro-nothink`  | `enabled`         | disabled  |
+| `{"type": "disabled"}`   | `deepseek-v4-pro-nothink`  | `enabled`         | disabled  |
+| `{"type": "enabled"}`    | `deepseek-v4-pro-nothink`  | `disabled`        | enabled   |
+| `{"type": "invalid"}`    | `deepseek-v4-pro`          | `enabled`         | enabled   |
+| `{"type": "invalid"}`    | `deepseek-v4-pro-nothink`  | `enabled`         | disabled  |
 
 ---
 
@@ -64,8 +115,7 @@ They map 1:1 to CLI flags.
 
 ### OCR Security & Cache (YAML-only)
 
-These advanced settings are configured in `config.yaml` only — there are no
-corresponding `GATEWAY_*` environment variables.
+These advanced settings are configured in `config.yaml` only — there are no corresponding `GATEWAY_*` environment variables.
 
 | YAML key                          | Default             | Description                                      |
 | --------------------------------- | ------------------- | ------------------------------------------------ |
@@ -102,9 +152,9 @@ corresponding `GATEWAY_*` environment variables.
 
 | Env var             | YAML key    | Default             | Description                                           |
 | ------------------- | ----------- | ------------------- | ----------------------------------------------------- |
-| `GATEWAY_HOST`      | `host`      | `127.0.0.1`         | Bind address                                          |
+| `GATEWAY_HOST`      | `host`      | `127.0.0.1`         | Bind address (use `0.0.0.0` in Docker containers)     |
 | `GATEWAY_PORT`      | `port`      | `9000`              | Bind port                                             |
-| `GATEWAY_NGROK`     | `ngrok`     | `true`              | Start an ngrok tunnel (disabled by default in Docker) |
+| `GATEWAY_NGROK`     | `ngrok`     | `true` (config) / `0` (`.env.example`) | Start an ngrok tunnel. Default `true` in native mode; Docker `.env.example` sets `0` to disable. |
 | `GATEWAY_NGROK_URL` | `ngrok_url` | —                   | Custom ngrok URL / reserved domain                    |
 | `GATEWAY_VERBOSE`   | `verbose`   | `false`             | Log full request/response payloads                    |
 | `GATEWAY_CORS`      | `cors`      | `false`             | Send permissive CORS headers                          |

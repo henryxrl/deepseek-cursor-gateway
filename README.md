@@ -10,20 +10,13 @@
 
 ---
 
-A local gateway that makes [Cursor](https://cursor.com) work with
-[DeepSeek V4](https://api-docs.deepseek.com) models, with Docker packaging,
-traffic control, and image/OCR handling.
+A local gateway that makes [Cursor](https://cursor.com) work with [DeepSeek V4](https://api-docs.deepseek.com) models, with Docker packaging, traffic control, and image/OCR handling.
 
 **What it does:**
 
-- **Reasoning-content cache** — preserves DeepSeek's `reasoning_content` across
-  Cursor turns so tool-call reasoning chains never break.
-- **Upstream traffic control** — concurrency gate, queue timeout, automatic
-  retry with exponential backoff, `Retry-After` support, and global 429
-  cooldown.
-- **Image input handling** — strip, reject, or OCR images before forwarding
-  to DeepSeek. Supports OpenAI-compatible vision models, Google Gemini, and
-  local Tesseract OCR.
+- **Reasoning-content cache** — preserves DeepSeek's `reasoning_content` across Cursor turns so tool-call reasoning chains never break.
+- **Upstream traffic control** — concurrency gate, queue timeout, automatic retry with exponential backoff, `Retry-After` support, and global 429 cooldown.
+- **Image input handling** — strip, reject, or OCR images before forwarding to DeepSeek. Supports OpenAI-compatible vision models, Google Gemini, and local Tesseract OCR.
 
 ---
 
@@ -64,11 +57,7 @@ deepseek-cursor-gateway --host 0.0.0.0 --port 9000
 
 ## Attribution
 
-This project is a fork of
-[abcduyt1243-git/deepseek-cursor-proxy-turbo](https://github.com/abcduyt1243-git/deepseek-cursor-proxy-turbo),
-which itself builds on
-[yxlao/deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy)
-by Yixing Lao.
+This project is a fork of [abcduyt1243-git/deepseek-cursor-proxy-turbo](https://github.com/abcduyt1243-git/deepseek-cursor-proxy-turbo), which itself builds on [yxlao/deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy) by Yixing Lao.
 
 See [UPSTREAM_README.md](UPSTREAM_README.md) for the original README.
 

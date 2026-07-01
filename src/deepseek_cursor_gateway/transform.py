@@ -82,6 +82,8 @@ EFFORT_ALIASES = {
     "xhigh": "max",
 }
 
+THINKING_DISABLED_SUFFIX = "-nothink"
+
 CURSOR_THINKING_BLOCK_RE = re.compile(
     r"""
     (?:
@@ -131,6 +133,24 @@ def normalize_reasoning_effort(value: Any) -> str:
     if not isinstance(value, str):
         return "high"
     return EFFORT_ALIASES.get(value.strip().lower(), "high")
+
+
+def parse_model_thinking_override(model_name: str) -> tuple[str, str | None]:
+    """Strip a ``-nothink`` suffix from *model_name* and return the thinking
+    override value.
+
+    Returns ``(stripped_model, thinking)`` where *thinking* is ``"disabled"``
+    when the suffix was found, or ``None`` when no override is present.
+    The suffix is matched case-insensitively and may appear multiple times
+    at the end of the name (all trailing occurrences are removed).
+    """
+    suffix_lower = THINKING_DISABLED_SUFFIX.lower()
+    stripped = model_name
+    while stripped.lower().endswith(suffix_lower):
+        stripped = stripped[: -len(THINKING_DISABLED_SUFFIX)]
+    if stripped == model_name:
+        return model_name, None
+    return stripped, "disabled"
 
 
 def extract_text_content(content: Any) -> str | None:
@@ -803,7 +823,11 @@ def prepare_upstream_request(
     authorization: str | None = None,
 ) -> PreparedRequest:
     original_model = str(payload.get("model") or config.upstream_model)
-    upstream_model = upstream_model_for(original_model, config)
+
+    # --- per-request thinking override ---
+    # Priority: request-body "thinking" field > model-name "-nothink" suffix > config
+    stripped_model, suffix_thinking = parse_model_thinking_override(original_model)
+    upstream_model = upstream_model_for(stripped_model, config)
 
     prepared = {
         key: value for key, value in payload.items() if key in SUPPORTED_REQUEST_FIELDS
@@ -849,13 +873,36 @@ def prepare_upstream_request(
         if tool_choice is not None:
             prepared["tool_choice"] = tool_choice
 
-    prepared["thinking"] = {"type": config.thinking}
-    thinking_enabled = config.thinking == "enabled"
-    thinking_disabled = config.thinking == "disabled"
+    # Resolve effective thinking: body field > model suffix > config default
+    effective_thinking: str | None = None
+    client_thinking = prepared.get("thinking")
+    if isinstance(client_thinking, dict):
+        raw_type = str(client_thinking.get("type", "")).strip().lower()
+        if raw_type in {"enabled", "disabled"}:
+            effective_thinking = raw_type
+
+    if effective_thinking is None:
+        if suffix_thinking is not None:
+            effective_thinking = suffix_thinking
+        else:
+            effective_thinking = config.thinking
+        prepared["thinking"] = {"type": effective_thinking}
+    # else: client set a valid thinking field in the body — keep it as-is
+
+    thinking_enabled = effective_thinking == "enabled"
+    thinking_disabled = effective_thinking == "disabled"
+
     if thinking_enabled:
-        prepared["reasoning_effort"] = normalize_reasoning_effort(
-            config.reasoning_effort
-        )
+        if "reasoning_effort" in prepared:
+            prepared["reasoning_effort"] = normalize_reasoning_effort(
+                prepared["reasoning_effort"]
+            )
+        else:
+            prepared["reasoning_effort"] = normalize_reasoning_effort(
+                config.reasoning_effort
+            )
+    else:
+        prepared.pop("reasoning_effort", None)
 
     cache_namespace = reasoning_cache_namespace(
         config,

@@ -131,7 +131,7 @@ class CliAndHelperTests(unittest.TestCase):
                 "--no-ngrok",
                 "--no-verbose",
                 "--no-display-reasoning",
-                "--no-collasible-resoning",
+                "--no-collapsible-reasoning",
                 "--cors",
                 "--trace-dir",
                 "/tmp/dcp-traces",
